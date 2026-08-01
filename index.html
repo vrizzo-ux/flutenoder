@@ -106,6 +106,39 @@ canvas{display:block}
 .key-note{font-size:8px;font-weight:bold}
 .key-kb{font-size:5px;color:var(--text)}
 .key.lit{outline:2px solid var(--white);background:#22223a}
+/* ARENA NOTE LOCK — dead keys grey out, the live key burns */
+.key.nl-off{opacity:.13;filter:grayscale(1)}
+.key.nl-live{background:#2b2205;box-shadow:inset 0 0 22px #ffdd0055;animation:nlpulse .7s ease-in-out infinite}
+.key.nl-live .key-note{color:#ffdd00 !important;text-shadow:0 0 12px #ffdd00}
+@keyframes nlpulse{0%,100%{box-shadow:inset 0 0 22px #ffdd0055}50%{box-shadow:inset 0 0 34px #ffdd00aa}}
+.fseg.nl-off{opacity:.15}
+
+/* ARENA NOTE LOCK banner — the demanded note, impossible to miss */
+/* Sits at the bottom, directly above the flute keys it governs — the top
+   centre is already occupied by the boss HUD. */
+#arena-lock{
+  position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+  display:none;flex-direction:column;align-items:center;gap:1px;
+  z-index:7;pointer-events:none;padding:5px 22px;
+  border:2px solid #ff2288;background:#140611ee;box-shadow:0 0 34px #ff228866;
+}
+#arena-lock.active{display:flex}
+#arena-lock.free{border-color:#ffdd00;box-shadow:0 0 40px #ffdd0088}
+#arena-lock-ttl{font-size:5px;letter-spacing:3px;color:#ff2288}
+#arena-lock-note{font-size:38px;font-weight:bold;line-height:1.05;text-shadow:0 0 26px currentColor}
+#arena-lock-sub{font-size:4px;letter-spacing:2px;color:#997788}
+#arena-lock-bar{width:130px;height:3px;background:#2a0a1c;margin-top:3px}
+#arena-lock-fill{height:100%;background:#ff2288;width:100%}
+
+/* MINOR BOSS INBOUND warning */
+#boss-warn{
+  position:absolute;top:36%;left:50%;transform:translate(-50%,-50%);
+  display:none;text-align:center;z-index:8;pointer-events:none;width:100%;
+}
+#boss-warn.active{display:block;animation:bwflash .46s steps(2,end) infinite}
+#boss-warn-t{font-size:17px;letter-spacing:7px;color:#ff8833;text-shadow:0 0 26px #ff8833,0 0 60px #ff2288}
+#boss-warn-s{font-size:6px;letter-spacing:3px;color:#ffdd00;margin-top:7px}
+@keyframes bwflash{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* START OVERLAY */
 /* ── MAIN MENU ── */
@@ -359,6 +392,26 @@ canvas{display:block}
 .up-btn.pres{border-color:var(--purple);color:var(--purple)}
 .up-btn.pres:hover{background:var(--purple);color:#000}
 
+/* wave replay selector (sits beside DEPLOY) */
+#wave-sel-wrap{display:flex;flex-direction:column;gap:3px;align-items:flex-end}
+#wave-sel-lbl{font-size:5px;letter-spacing:2px;color:#6677aa}
+#wave-sel{
+  font-family:inherit;font-size:7px;letter-spacing:1px;padding:8px 6px;
+  background:#0b0b10;color:#aabbdd;border:2px solid #333355;cursor:pointer;min-width:150px;
+}
+#wave-sel:hover{border-color:#3399ff;color:#cfe}
+#wave-sel option{background:#0b0b10;color:#aabbdd}
+#wave-sel option.boss-opt{color:#ff2288}
+#replay-warn{font-size:5px;letter-spacing:1px;color:#ffdd00;min-height:8px}
+#replay-warn.hidden{visibility:hidden}
+/* replay badge shown during a replayed wave */
+#replay-badge{
+  position:absolute;top:6px;left:6px;display:none;z-index:6;pointer-events:none;
+  font-size:5px;letter-spacing:2px;color:#ffdd00;border:1px solid #ffdd00;
+  background:#12100477;padding:4px 8px;
+}
+#replay-badge.active{display:block}
+
 /* skill node hover card */
 #tt{
   position:absolute;z-index:140;display:none;width:250px;
@@ -470,6 +523,23 @@ canvas{display:block}
     <div id="floats"></div>
     <div id="distort-overlay"></div>
 
+    <!-- REPLAY BADGE -->
+    <div id="replay-badge">REPLAY · 30% SALVAGE</div>
+
+    <!-- ARENA NOTE LOCK -->
+    <div id="arena-lock">
+      <div id="arena-lock-ttl">ARENA NOTE LOCK</div>
+      <div id="arena-lock-note" style="color:#fff">C</div>
+      <div id="arena-lock-sub">ONLY THIS NOTE WORKS</div>
+      <div id="arena-lock-bar"><div id="arena-lock-fill"></div></div>
+    </div>
+
+    <!-- MINOR BOSS INBOUND -->
+    <div id="boss-warn">
+      <div id="boss-warn-t">! BOSS INBOUND !</div>
+      <div id="boss-warn-s">BREACHING THE LATTICE</div>
+    </div>
+
     <!-- BOSS HUD -->
     <div id="boss-hud">
       <div id="boss-hud-name">GODNODE PRIME</div>
@@ -511,6 +581,11 @@ canvas{display:block}
       <div id="up-foot">
         <div id="up-hint">Click a node to buy it. Dim nodes need the node feeding into them first. Cores come from bosses and elites.</div>
         <button class="up-btn pres" id="prestige-btn2" onclick="doPrestige()">COLLAPSE RUN</button>
+        <div id="wave-sel-wrap">
+          <div id="wave-sel-lbl">DEPLOY TO</div>
+          <select id="wave-sel" onchange="onWaveSelect(this.value)"></select>
+          <div id="replay-warn" class="hidden">REPLAY · 30% SALVAGE</div>
+        </div>
         <button class="up-btn" id="up-go" onclick="closeUpgrades()">DEPLOY</button>
       </div>
     </div>
@@ -1053,6 +1128,32 @@ function playBossPhase(p){
   if(p>=3) sfxNoiseBurst(ac,out,t+0.30,0.30,0.045,'bandpass',400,5000,1.4);  // extra riser
 }
 
+// ── Minor boss inbound: telegraph sting ──────────────────────────
+// Three rising alarm blasts over a swelling sub — reads as "something is
+// coming" rather than "something just happened".
+function playBossIncoming(){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+  [0,0.34,0.68].forEach(function(off,i){
+    var base=196*Math.pow(1.12,i);
+    [1,1.5].forEach(function(mul,j){                    // root + fifth klaxon
+      var o=ac.createOscillator(), g=ac.createGain(), sh=sfxShaper(ac);
+      var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1800+i*400;
+      o.type='sawtooth';
+      o.frequency.setValueAtTime(base*mul,t+off);
+      o.frequency.linearRampToValueAtTime(base*mul*1.06,t+off+0.22);
+      g.gain.setValueAtTime(0.0001,t+off);
+      g.gain.linearRampToValueAtTime(0.05*(j?0.55:1),t+off+0.04);
+      g.gain.setValueAtTime(0.05*(j?0.55:1),t+off+0.16);
+      g.gain.exponentialRampToValueAtTime(0.0008,t+off+0.28);
+      o.connect(sh); sh.connect(lp); lp.connect(g); g.connect(out);
+      o.start(t+off); o.stop(t+off+0.30);
+    });
+  });
+  sfxPartial(ac,out,'sine',48,72,t,1.0,0.10);            // swelling sub
+  sfxNoiseBurst(ac,out,t+0.6,0.45,0.05,'bandpass',500,4200,1.3);
+}
+
 // ── Boss hit ─────────────────────────────────────────────────────
 // Metallic impact, not a beep. Break hits are brighter and harder.
 function playBossHit(isBreak){
@@ -1227,6 +1328,7 @@ function _scheduleTick(){
     if(_track==='menu')   _menuBeat(ac, m.dest, _trackBeat, _trackNext);
     if(_track==='combat') _combatBeat(ac, m.dest, _trackBeat, _trackNext);
     if(_track==='death')  _deathBeat(ac, m.dest, _trackBeat, _trackNext);
+    if(_track==='superboss') _superBeat(ac, m.dest, _trackBeat, _trackNext);
     _trackBeat++;
     _trackNext += _beatLen();
   }
@@ -1234,6 +1336,12 @@ function _scheduleTick(){
 }
 
 function _beatLen(){
+  if(_track==='superboss'){
+    // The pulse itself is unwell: the bar drags and lurches, worse each phase.
+    var ph=_superPhase();
+    var wob=1 + (((_trackBeat*5)%7)-3)*0.012*ph;   // deterministic limp
+    return (60/(126+(currentWave||0)*1.5))*wob;
+  }
   var bpm = _track==='menu' ? 96
           : _track==='death' ? 72
           : Math.min(175, 128 + (currentWave||0)*3);  // combat speeds up
@@ -1390,6 +1498,81 @@ function _combatBeat(ac,dest,beat,t){
 }
 
 // ═══════════════════════════════════════════════════════
+// TRACK 4: SUPER BOT — deliberately wrong. Detuned, drifting,
+// degrading further with every phase the boss enters.
+// ═══════════════════════════════════════════════════════
+// Octatonic-ish set full of tritones and minor seconds — no consonant
+// interval to rest on anywhere in the scale.
+var _superScale = [0,1,3,6,7,9,10];
+var _superRoot  = 58.27;   // Bb1, sitting a little flat of anything useful
+
+function _superPhase(){ return (boss && boss.tier==='mega') ? boss.phase : 1; }
+
+// A note that will not hold still: it slides off pitch across its own length.
+function _sickNote(ac,dest,type,freq,t,dur,vol,cents,drift){
+  var o=ac.createOscillator(), g=ac.createGain();
+  o.type=type;
+  o.frequency.setValueAtTime(freq,t);
+  o.frequency.linearRampToValueAtTime(freq*(1+(drift||0)),t+dur);   // sags/rises
+  o.detune.setValueAtTime(cents||0,t);
+  g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.012);
+  g.gain.setValueAtTime(vol*0.7,t+dur*0.55);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g); g.connect(dest); o.start(t); o.stop(t+dur+0.02);
+  _mn_push(o);
+}
+
+function _superBeat(ac,dest,beat,t){
+  var bl=_beatLen(), bar=beat%16;
+  var ph=_superPhase();                       // 1 → 3, the rot advancing
+  var rot=(ph-1)*0.5;                         // 0, .5, 1
+  var det=18+rot*46;                          // detune spread in cents
+  var sag=-0.004-rot*0.012;                   // how far notes slide flat
+
+  // ── percussion: the grid keeps dropping out ──
+  var skip=(beat*7)%(11-ph*2)===0;            // more dropouts each phase
+  if((bar===0||bar===8) && !skip) chipKick(ac,dest,t,0.30);
+  if(ph>=2 && bar===11) chipKick(ac,dest,t+bl*0.33,0.16);      // off-grid stumble
+  if(bar===4||bar===12) chipSnare(ac,dest,t,0.12);
+  if(ph>=3 && bar===7) chipSnare(ac,dest,t+bl*0.5,0.07);
+  if(!((beat*3)%(9-ph)===0)) chipHat(ac,dest,t,bar%2===0?0.05:0.03);
+
+  // ── bass: two copies of the same line, pulling apart ──
+  var bassDeg=[0,0,3,0, 6,3,0,4, 0,3,6,3, 7,6,4,3][bar];
+  if(bar%2===0 || ph>=3){
+    var bf=scaleHz(_superRoot,_superScale,bassDeg);
+    _sickNote(ac,dest,'sawtooth',bf,t,bl*0.8,0.17,-det*0.5,sag);
+    _sickNote(ac,dest,'sawtooth',bf,t,bl*0.8,0.15,+det*0.5,sag*0.4);
+    _sickNote(ac,dest,'sine',bf/2,t,bl*0.95,0.11,0,sag*0.3);
+  }
+
+  // ── lead: a phrase that never resolves, doubled a semitone out ──
+  if(beat%2===0){
+    var ph1=[[0,3,6,3],[6,7,3,0],[1,3,7,6],[9,6,3,1]][Math.floor(beat/8)%4];
+    var lDeg=ph1[Math.floor(beat/2)%4];
+    var lf=scaleHz(_superRoot*4,_superScale,lDeg);
+    _sickNote(ac,dest,'square',lf,t,bl*1.5,0.075,det,sag);
+    _sickNote(ac,dest,'square',lf*1.0595,t,bl*1.35,0.045*(0.6+rot),-det,sag*1.6); // clash
+  }
+
+  // ── arp: sixteenths that wander out of tune as they go ──
+  var ap=[0,3,6,7,3,6,9,6,0,6,3,7,6,9,7,3];
+  var af=scaleHz(_superRoot*2,_superScale,ap[bar]);
+  _sickNote(ac,dest,'square',af,t,bl*0.26,0.05,det*(bar%3-1),sag*2);
+
+  // ── the drone underneath, sinking the whole time ──
+  if(bar===0){
+    _sickNote(ac,dest,'sawtooth',_superRoot,t,bl*16.5,0.055,0,sag*3.5);
+    _sickNote(ac,dest,'sawtooth',_superRoot*Math.pow(2,6/12),t,bl*16.5,0.04+rot*0.02,det,sag*2.5);
+  }
+  // ── phase 3: a siren smeared across the bar ──
+  if(ph>=3 && bar===0){
+    _sickNote(ac,dest,'sawtooth',_superRoot*8,t,bl*7,0.030,0,-0.35);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 // TRACK 3: DEATH  — eerie, slow, unsettling
 // ═══════════════════════════════════════════════════════
 var _deathScale = [0,1,3,5,6,8,10];   // phrygian
@@ -1435,6 +1618,7 @@ function stopBgMusic(fade){ stopTrack(fade); }
 // startMenuMusic / startDeathMusic / startCombatMusic
 function musicMenu()  { playTrack('menu'); }
 function musicCombat(){ playTrack('combat'); }
+function musicSuperBoss(){ playTrack('superboss'); }
 function musicDeath() { playTrack('death'); }
 function musicStop(f) { stopTrack(f||1.0); }
 
@@ -1482,6 +1666,21 @@ canvas.addEventListener('mousemove',function(e){
 // ----------------------------------------------------------------
 var res={red:0,blue:0,yellow:0,core:0};
 var echoes=0, prestigeCount=0, bestWave=1, nextWaveNum=1;
+// ── WAVE REPLAY ──
+// maxCleared is the progression frontier: the highest wave actually beaten.
+// Replaying anything below it is practice — full XP of experience, 30% of
+// the salvage, and it never rolls the frontier backwards.
+var maxCleared=0;
+var replayActive=false;
+var REPLAY_PAYOUT=0.30;
+function naturalNextWave(){ return Math.max(1,(maxCleared||0)+1); }
+function payoutMult(){ return replayActive?REPLAY_PAYOUT:1; }
+function updateReplayBadge(){
+  var el=document.getElementById('replay-badge');
+  if(!el) return;
+  el.classList.toggle('active', !!replayActive && waveState!=='upgrade');
+  el.textContent='REPLAY W'+currentWave+' · '+Math.round(REPLAY_PAYOUT*100)+'% SALVAGE';
+}
 var mult={
   redMult:1,blueMult:1,yellowMult:1,
   clickPow:1,damageMult:1,autoRate:0,spawnRate:1,
@@ -1542,7 +1741,7 @@ var WAVE_MODIFIERS=[
   {id:'swarm',    name:'SWARM',         color:'#ff8833', desc:'Double the nodes, half the HP each.'},
   {id:'armored',  name:'ARMORED',       color:'#33ff88', desc:'Nodes carry 2.2x HP.'},
   {id:'fast',     name:'SPEED SURGE',   color:'#ffdd00', desc:'Nodes close in 75% faster.'},
-  {id:'toxic',    name:'TOXIC LEAK',    color:'#cc44ff', desc:'Virus drain more than doubled.'},
+  {id:'toxic',    name:'TOXIC LEAK',    color:'#cc44ff', desc:'Virus drain up 60%.'},
   {id:'regen',    name:'REGEN FIELD',   color:'#ff3355', desc:'Damaged nodes heal themselves.'},
   {id:'shielded', name:'HARMONIC LOCK', color:'#00ddff', desc:'Half the nodes wear a note shield.'},
   {id:'artillery',name:'ARTILLERY',     color:'#ff2288', desc:'Shooter nodes everywhere. Keep moving.'},
@@ -1572,10 +1771,13 @@ function getWaveDef(w){
   var has=function(id){ return mods.some(function(m){return m.id===id;}); };
   var bossW=isBossWave(w);
 
-  var baseCount=Math.round(9+w*2.4+w*w*0.05);
+  // Node counts are cut back from the original curve: every wave now also
+  // carries a boss, so the node phase has to be shorter to keep wave length
+  // roughly where it was.
+  var baseCount=Math.round(6+w*1.7+w*w*0.04);
   var nodeCount=has('swarm')?Math.round(baseCount*1.6):baseCount;
-  nodeCount=Math.min(150,nodeCount);
-  if(bossW) nodeCount=Math.round(5+w*1.1);   // boss waves: escorts only
+  nodeCount=Math.min(120,nodeCount);
+  if(bossW) nodeCount=Math.round(2+w*0.28);   // mega waves: a thin escort only
 
   var weaken=1-Math.min(0.35,(skillLvs['node_hp']||0)*0.07);
   var hpMult=(has('armored')?2.2:1)*(has('swarm')?0.5:1);
@@ -1592,10 +1794,12 @@ function getWaveDef(w){
     isBossWave:bossW,
     nodeCount:nodeCount,
     hpScale:hpScale,
-    dmgScale:1+w*0.24,
+    dmgScale:1+w*0.16,
     spdScale:(1+w*0.09)*(has('fast')?1.75:1),
     types:types,
-    virusDrain:(0.35+w*0.16)*(has('toxic')?2.2:1),
+    // Waves run considerably longer now that each one ends in a boss, so the
+    // drain per second comes down to keep total attrition comparable.
+    virusDrain:(0.10+w*0.035)*(has('toxic')?1.6:1),
     regens:has('regen'),
     rangeMult:has('blackout')?0.7:1,
     eliteChance:has('elite')?0.45:Math.min(0.26,Math.max(0,w-5)*0.022),
@@ -1720,8 +1924,23 @@ function handleNote(noteName,keyK){
     }
   }
 
+  // ── ARENA NOTE LOCK ─────────────────────────────────────────────
+  // Read the lock BEFORE the boss consumes the note: playing the demanded
+  // note advances the sequence, which immediately makes a *different* note
+  // live. Judging the note against the post-advance state would reject the
+  // very note that was correct, and nothing would ever hit an escort.
+  var lockWasOn=arenaLockActive();
+  var lockedNote=lockWasOn?arenaLockNote():null;
+
   // ── BOSS: sequence resonance ────────────────────────────────────
   if(boss && boss.alive) bossNote(noteName);
+
+  // A mega boss owns the whole arena: anything other than the note it was
+  // demanding is inert — no node damage, no shield chip, nothing.
+  if(lockWasOn && noteName!==lockedNote){
+    spawnFloat(player.x,player.y-30,lockedNote?('LOCKED — PLAY '+lockedNote):'LOCKED','#ff2288',10);
+    return;
+  }
 
   // Normal node hitting
   var targetColor=entry.color;
@@ -1855,7 +2074,7 @@ function makeNode(waveDef,forced,opts){
   if(arch==='runner') hpBase*=0.7;
   var hp=Math.max(1,Math.round(hpBase));
   var spd=(28+Math.random()*26)*waveDef.spdScale*(isElite?0.8:1);
-  var dmg=Math.round(3*waveDef.dmgScale*(isElite?1.6:1)*(isTank?1.4:1));
+  var dmg=Math.round(2.2*waveDef.dmgScale*(isElite?1.6:1)*(isTank?1.4:1));
 
   return {
     x:x,y:y,r:r,color:c,
@@ -1883,6 +2102,7 @@ function killNode(i){
   if(!n||!n.alive) return;
   n.alive=false;
   nodes.splice(i,1);
+  if(n.fromWave) window._waveKilled=(window._waveKilled||0)+1;
   playBust(NOTEFREQ[COLOR_NOTE[n.color]]||440);
 
   var c=COLOR_CSS[n.color]||'#fff';
@@ -1897,7 +2117,7 @@ function killNode(i){
   var base=(n.isTank?7:2)*(n.isElite?4:1)*cBonus*(1+currentWave*0.05);
   var cm=(n.color==='red'||n.color==='green')?mult.redMult
         :(n.color==='blue'||n.color==='boss')?mult.blueMult:mult.yellowMult;
-  var amt=Math.max(1,Math.floor(base*cm*mult.echoRes));
+  var amt=Math.max(1,Math.floor(base*cm*mult.echoRes*payoutMult()));
   var rc=(n.color==='red'||n.color==='green'||n.color==='orange')?'red'
         :(n.color==='blue'||n.color==='boss')?'blue':'yellow';
   res[rc]+=amt;
@@ -1905,7 +2125,7 @@ function killNode(i){
 
   if(n.isElite){
     playEliteKill();
-    var cores=1+(skillLvs['core_finder']||0);
+    var cores=Math.max(1,Math.round((1+(skillLvs['core_finder']||0))*payoutMult()));
     res.core+=cores;
     spawnFloat(n.x,n.y-18,'ELITE  +'+cores+' CORE','#ff66ff',11);
     log('Elite node cracked — +'+cores+' core','y');
@@ -1944,9 +2164,12 @@ function killNode(i){
 
 function waveClear(){
   waveActive=false;
+  minorBossState='none';
+  hideBossWarn();
   hideBossHUD();
+  updateNoteLockUI();
   var bossW=isBossWave(currentWave);
-  var bonus=Math.round((140+currentWave*70)*(bossW?2.5:1)*mult.echoRes);
+  var bonus=Math.round((140+currentWave*70)*(bossW?2.5:1)*mult.echoRes*payoutMult());
   res.red+=bonus; res.blue+=Math.floor(bonus*0.7); res.yellow+=Math.floor(bonus*0.5);
   if(currentWave>bestWave) bestWave=currentWave;
   log('WAVE '+currentWave+' CLEARED — salvage +'+bonus,'g');
@@ -1967,9 +2190,15 @@ function showWaveTransition(waveNum){
   waveState='transition';
   currentWave=waveNum;
   nextWaveNum=waveNum;
+  // Anything below the frontier is a replay: reduced salvage, no rollback.
+  replayActive=(waveNum<naturalNextWave());
   nodes=[]; particles=[]; voidEntities=[]; projectiles=[]; shockwaves=[]; beams=[];
   boss=null;
+  minorBossState='none';
+  hideBossWarn();
   hideBossHUD();
+  updateNoteLockUI();
+  updateReplayBadge();
   var def=getWaveDef(waveNum);
   curWaveDef=def;
   var ov=document.getElementById('wave-overlay');
@@ -1989,7 +2218,12 @@ function showWaveTransition(waveNum){
   } else {
     sub.textContent=def.mods.map(function(m){return m.name;}).join('  +  ');
     sub.style.color=def.mod.color;
-    document.getElementById('wo-desc').textContent=def.description;
+    document.getElementById('wo-desc').textContent=def.description
+      +' A breach warden arrives once half the nodes are down.';
+  }
+  if(replayActive){
+    sub.innerHTML='<span style="color:#ffdd00">REPLAY · '+Math.round(REPLAY_PAYOUT*100)
+      +'% SALVAGE</span><br>'+sub.innerHTML;
   }
   var ep=document.getElementById('wo-enemies');
   ep.innerHTML='';
@@ -2028,30 +2262,82 @@ function beginWave(){
   player.shieldT=0;
   nodes=[];projectiles=[];shockwaves=[];beams=[];
   boss=null;
+  window._waveKilled=0;
+  window._waveTotal=def.nodeCount;
   if(currentWave>bestWave) bestWave=currentWave;
   log('WAVE '+currentWave+' — '+def.mods.map(function(m){return m.name;}).join(' + ')+' — '+def.nodeCount+' nodes','g');
-  musicCombat();
-  if(def.isBossWave) spawnBoss(currentWave);
+  if(def.isBossWave){
+    // Mega wave: the SUPER BOT is already here. No minor boss on top.
+    minorBossState='none';
+    spawnBoss(currentWave);
+  } else {
+    minorBossState='pending';
+    minorBossWarnT=0;
+    musicCombat();
+  }
+  updateNoteLockUI();
+  updateReplayBadge();
   var firstBatch=Math.min(def.isBossWave?2:4, window._waveNodesLeft);
   for(var i=0;i<firstBatch;i++) spawnWaveNode(def);
+}
+
+// Minor boss breaks in once roughly half the wave's nodes are down,
+// after a telegraphed warning.
+function updateMinorBoss(dt){
+  if(!waveActive) return;
+  if(minorBossState==='pending'){
+    var total=window._waveTotal||1;
+    if((window._waveKilled||0) >= Math.ceil(total*0.5)){
+      minorBossState='warning';
+      minorBossWarnT=2.2;
+      var wb=document.getElementById('boss-warn');
+      if(wb){
+        document.getElementById('boss-warn-s').textContent='BREACH WARDEN INBOUND · WAVE '+currentWave;
+        wb.classList.add('active');
+      }
+      playBossIncoming();
+      log('WARNING — a breach warden is forcing its way in','r');
+    }
+  } else if(minorBossState==='warning'){
+    minorBossWarnT-=dt;
+    if(minorBossWarnT<=0){
+      var wb2=document.getElementById('boss-warn');
+      if(wb2) wb2.classList.remove('active');
+      minorBossState='active';
+      spawnMinorBoss(currentWave);
+    }
+  }
+}
+
+function hideBossWarn(){
+  var wb=document.getElementById('boss-warn');
+  if(wb) wb.classList.remove('active');
 }
 
 function checkWaveClear(){
   if(!waveActive) return;
   if(boss && boss.alive) return;
+  // The wave cannot resolve while its boss is still owed or inbound.
+  if(minorBossState==='pending'||minorBossState==='warning'||minorBossState==='active') return;
   if(nodes.length===0 && window._waveNodesLeft<=0) waveClear();
 }
 
 function spawnWaveNode(def){
   if(window._waveNodesLeft<=0) return;
   window._waveNodesLeft--;
-  nodes.push(makeNode(def));
+  var n=makeNode(def);
+  n.fromWave=true;      // only these count toward the minor boss trigger
+  nodes.push(n);
 }
 
 // ================================================================
 // BOSS SYSTEM
 // ================================================================
 var boss=null;
+// Minor-boss arrival state for the current wave:
+// 'none' (mega wave — no minor boss) | 'pending' | 'warning' | 'active' | 'done'
+var minorBossState='none';
+var minorBossWarnT=0;
 var BOSS_NOTES=['C','D','E','F','G','A','B'];
 var BOSS_ROSTER=[
   {id:'warden',    name:'RESONANT WARDEN', color:'#cc00ff', hp:1.00, seq:2, atk:['shock'],
@@ -2071,32 +2357,151 @@ function bossForWave(w){
   return { def:BOSS_ROSTER[tier%BOSS_ROSTER.length], loop:Math.floor(tier/BOSS_ROSTER.length) };
 }
 
+// ── MEGA BOSS — every 5th wave. Arena note lock + distorted track. ──
 function spawnBoss(w){
   var pick=bossForWave(w), b=pick.def;
-  var maxHp=Math.round((120+w*70+w*w*6)*b.hp*(1+pick.loop*1.1));
+  var maxHp=Math.round((6+w*4+w*w*1.4)*b.hp*(1+pick.loop*1.1));
   boss={
     def:b, name:b.name+(pick.loop>0?' MK'+(pick.loop+1):''), color:b.color,
+    tier:'mega', arenaLock:true,
     x:W/2, y:H*0.30, tx:W/2, ty:H*0.30,
     r:42, hp:maxHp, maxHp:maxHp, alive:true,
     phase:1, seq:[], seqIdx:0, vuln:0, flash:0, angle:0,
     attackT:3.4, moveT:0, invuln:1.5, loop:pick.loop,
     baseSeq:Math.max(1, b.seq-(skillLvs['tempo']||0)),
-    atk:b.atk.slice()
+    atk:b.atk.slice(),
+    noteRotT:0, noteRotEvery:0
+  };
+  boss.noteRotEvery=megaRotEvery();
+  boss.noteRotT=boss.noteRotEvery;
+  rollBossSeq();
+  document.getElementById('boss-hud').classList.add('active');
+  updateBossHUD();
+  updateNoteLockUI();
+  musicSuperBoss();
+  log('SUPER BOT: '+boss.name+' has seized the arena — only its note will sound','r');
+  spawnFloat(W/2,H*0.55,boss.name,b.color,18);
+  spawnFloat(W/2,H*0.55+26,'ARENA NOTE LOCK','#ff2288',12);
+}
+
+// How often the mega boss re-rolls the note it demands. Tightens per phase,
+// so you are always chasing it rather than settling into a rhythm.
+function megaRotEvery(){
+  var ph=boss?boss.phase:1;
+  return Math.max(1.5, 3.0-(ph-1)*0.6);
+}
+
+// ── MINOR BOSS — one per non-boss wave, arrives partway through. ──
+// Deliberately light: short sequence, small HP, one or two attack types.
+function spawnMinorBoss(w){
+  var maxHp=Math.round(8+w*3+w*w*0.9);
+  var atk=['shock'];
+  if(w>=6) atk.push('orb');
+  if(w>=13) atk.push('beam');
+  var seqLen=w<5?1:(w<12?2:3);
+  var col=['#66ddff','#ffaa44','#88ff44','#ff66aa'][w%4];
+  boss={
+    def:{id:'minor',flavor:'A fragment of something larger.'},
+    name:'BREACH WARDEN W'+w, color:col,
+    tier:'minor', arenaLock:false,
+    x:W/2, y:H*0.28, tx:W/2, ty:H*0.28,
+    r:26, hp:maxHp, maxHp:maxHp, alive:true,
+    phase:1, seq:[], seqIdx:0, vuln:0, flash:0, angle:0,
+    attackT:3.0, moveT:0, invuln:1.0, loop:0,
+    baseSeq:Math.max(1, seqLen-(skillLvs['tempo']||0)),
+    atk:atk,
+    noteRotT:0, noteRotEvery:0
   };
   rollBossSeq();
   document.getElementById('boss-hud').classList.add('active');
   updateBossHUD();
-  log('WARNING: '+boss.name+' has breached the lattice','r');
-  spawnFloat(W/2,H*0.55,boss.name,b.color,18);
+  log('MINOR BOSS: '+boss.name+' has broken through','r');
+  spawnFloat(W/2,H*0.5,'BREACH WARDEN',col,16);
 }
 
 function rollBossSeq(){
   if(!boss) return;
-  var len=Math.max(1, boss.baseSeq+(boss.phase-1));
+  var len=boss.tier==='minor'
+    ? Math.max(1, boss.baseSeq)                     // minor bosses stay short
+    : Math.max(1, boss.baseSeq+(boss.phase-1));
   boss.seq=[];
   for(var i=0;i<len;i++) boss.seq.push(BOSS_NOTES[Math.floor(Math.random()*7)]);
   boss.seqIdx=0;
+  if(boss.tier==='mega'){
+    boss.noteRotEvery=megaRotEvery();
+    boss.noteRotT=boss.noteRotEvery;
+  }
   updateBossHUD();
+  updateNoteLockUI();
+}
+
+// ── ARENA NOTE LOCK ──────────────────────────────────────────────
+// While a mega boss holds the arena, the note it demands is the only
+// note that does anything — to it, to nodes, to shields. The Resonance
+// Break lifts the lock for its duration; that release is the reward.
+function arenaLockActive(){
+  return !!(boss && boss.alive && boss.arenaLock && boss.vuln<=0);
+}
+function arenaLockNote(){
+  if(!arenaLockActive()) return null;
+  if(boss.invuln>0) return null;          // reforming: nothing is live yet
+  return boss.seq[boss.seqIdx]||null;
+}
+
+// Grey out every flute key except the live one, and drive the banner.
+var _nlSig='';
+function updateNoteLockUI(){
+  var locked=arenaLockActive();
+  var live=arenaLockNote();
+  var freeing=!!(boss && boss.alive && boss.arenaLock && boss.vuln>0);
+  // The rotation bar moves every frame; the rest only when the state flips.
+  var sig=(locked?'1':'0')+(live||'-')+(freeing?'F':'-')+((boss&&boss.alive&&boss.arenaLock)?'B':'-');
+  if(sig!==_nlSig){
+    _nlSig=sig;
+    _applyNoteLockUI(locked,live,freeing);
+  }
+  var fill=document.getElementById('arena-lock-fill');
+  if(fill && boss && boss.arenaLock){
+    var frac=(boss.noteRotEvery>0 && !freeing && live)
+      ? Math.max(0,Math.min(1,boss.noteRotT/boss.noteRotEvery)) : 1;
+    fill.style.width=(frac*100).toFixed(1)+'%';
+    fill.style.background=freeing?'#ffdd00':'#ff2288';
+  }
+}
+function _applyNoteLockUI(locked,live,freeing){
+  Object.keys(KEY_MAP).forEach(function(k){
+    var el=document.getElementById('key-'+k);
+    var seg=document.getElementById('fseg-'+k);
+    var isLive=(KEY_MAP[k].note===live);
+    if(el){
+      el.classList.toggle('nl-off', locked && !isLive);
+      el.classList.toggle('nl-live', locked && isLive);
+    }
+    if(seg) seg.classList.toggle('nl-off', locked && !isLive);
+  });
+  var box=document.getElementById('arena-lock');
+  if(!box) return;
+  var showBanner=!!(boss && boss.alive && boss.arenaLock);
+  box.classList.toggle('active', showBanner);
+  box.classList.toggle('free', freeing);
+  if(!showBanner) return;
+  var noteEl=document.getElementById('arena-lock-note');
+  var ttl=document.getElementById('arena-lock-ttl');
+  var sub=document.getElementById('arena-lock-sub');
+  if(freeing){
+    ttl.textContent='RESONANCE BREAK'; ttl.style.color='#ffdd00';
+    noteEl.textContent='ANY'; noteEl.style.color='#ffdd00';
+    sub.textContent='LOCK LIFTED — EVERY NOTE LANDS';
+  } else if(!live){
+    ttl.textContent='ARENA NOTE LOCK'; ttl.style.color='#ff2288';
+    noteEl.textContent='--'; noteEl.style.color='#666677';
+    sub.textContent='SHIELD REFORMING';
+  } else {
+    ttl.textContent='ARENA NOTE LOCK'; ttl.style.color='#ff2288';
+    noteEl.textContent=live;
+    noteEl.style.color=COLOR_CSS[NOTE_TO_COLOR[live]]||'#fff';
+    sub.textContent='ONLY THIS NOTE WORKS';
+  }
 }
 
 function bossNote(noteName){
@@ -2118,8 +2523,11 @@ function bossNote(noteName){
       boss.vuln=4.0;
       document.getElementById('boss-hud').classList.add('vuln');
       spawnFloat(boss.x,boss.y-boss.r-24,'RESONANCE BREAK','#ffdd00',16);
-      log('RESONANCE BREAK — every note lands for 4 seconds','y');
+      log(boss.arenaLock
+        ? 'RESONANCE BREAK — the arena lock is off for 4 seconds'
+        : 'RESONANCE BREAK — every note lands for 4 seconds','y');
       playResonanceBreak(boss.vuln);
+      updateNoteLockUI();
     }
     updateBossHUD();
   } else {
@@ -2132,6 +2540,7 @@ function bossNote(noteName){
       bossShockwave(0.55);
       flashDistort();
       updateBossHUD();
+      updateNoteLockUI();
     }
   }
   return true;
@@ -2143,10 +2552,13 @@ function bossDamage(dmg,isBreak){
   spawnFloat(boss.x+(Math.random()-0.5)*50, boss.y-8, '-'+fmt(dmg), isBreak?'#ffdd00':boss.color, isBreak?13:10);
   playBossHit(isBreak);
   combo++; comboTimer=2.5;
-  if(skillLvs['siphon']>0){ var s=skillLvs['siphon']*2; res.red+=s;res.blue+=s;res.yellow+=s; }
-  var pct=boss.hp/boss.maxHp;
-  if(boss.phase===1&&pct<=0.66) bossPhase(2);
-  else if(boss.phase===2&&pct<=0.33) bossPhase(3);
+  if(skillLvs['siphon']>0){ var s=Math.round(skillLvs['siphon']*2*payoutMult()); res.red+=s;res.blue+=s;res.yellow+=s; }
+  // Only mega bosses escalate through phases; minor bosses stay one shape.
+  if(boss.tier!=='minor'){
+    var pct=boss.hp/boss.maxHp;
+    if(boss.phase===1&&pct<=0.66) bossPhase(2);
+    else if(boss.phase===2&&pct<=0.33) bossPhase(3);
+  }
   if(boss.hp<=0){ killBoss(); return; }
   updateBossHUD();
 }
@@ -2160,6 +2572,7 @@ function bossPhase(p){
   playBossPhase(p);
   document.getElementById('boss-hud').classList.remove('vuln');
   rollBossSeq();
+  updateNoteLockUI();
   bossShockwave(0.8);
   bossAdds();
   flashDistort();
@@ -2169,27 +2582,42 @@ function bossPhase(p){
 
 function killBoss(){
   var b=boss;
+  var wasMega=(b.tier!=='minor');
   boss=null;
   stopResonanceDrone(0.25);
   hideBossHUD();
-  for(var j=0;j<70;j++){
+  updateNoteLockUI();
+  if(!wasMega) minorBossState='done';
+  for(var j=0;j<(wasMega?70:34);j++){
     var a=Math.random()*Math.PI*2, sp=60+Math.random()*220;
     particles.push({x:b.x,y:b.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:3+Math.random()*4,
       color:j%3===0?'#ffffff':b.color,life:0.9+Math.random()*0.8,isRect:j%2===0});
   }
   var bm=1+(skillLvs['boss_drop']||0)*0.6;
-  var loot=Math.round((260+currentWave*130)*bm*mult.echoRes);
-  var cores=3+Math.floor(currentWave/5)+(skillLvs['core_finder']||0)*2;
-  res.red+=loot; res.blue+=loot; res.yellow+=loot; res.core+=cores;
-  spawnFloat(b.x,b.y,'BOSS DOWN','#ffdd00',22);
-  spawnFloat(b.x,b.y+28,'+'+fmt(loot)+' each  ·  +'+cores+' CORES','#ff66ff',11);
-  log(b.name+' DESTROYED — +'+fmt(loot)+' each, +'+cores+' cores','g');
-  if(mult.vampLv>0) player.hp=Math.min(player.maxHp,player.hp+10*mult.vampLv);
-  flashDistort();
-  // clear escorts so the wave resolves cleanly
-  window._waveNodesLeft=0;
-  for(var i=nodes.length-1;i>=0;i--){ if(!nodes[i]||!nodes[i].alive) continue; nodes[i].hp=0; nodes[i].shieldHp=0; killNode(i); }
-  projectiles=[];beams=[];shockwaves=[];
+  var pay=payoutMult();
+  if(wasMega){
+    var loot=Math.round((260+currentWave*130)*bm*mult.echoRes*pay);
+    var cores=Math.max(1,Math.round((3+Math.floor(currentWave/5)+(skillLvs['core_finder']||0)*2)*pay));
+    res.red+=loot; res.blue+=loot; res.yellow+=loot; res.core+=cores;
+    spawnFloat(b.x,b.y,'BOSS DOWN','#ffdd00',22);
+    spawnFloat(b.x,b.y+28,'+'+fmt(loot)+' each  ·  +'+cores+' CORES','#ff66ff',11);
+    log(b.name+' DESTROYED — +'+fmt(loot)+' each, +'+cores+' cores','g');
+    if(mult.vampLv>0) player.hp=Math.min(player.maxHp,player.hp+10*mult.vampLv);
+    flashDistort();
+    // clear escorts so the wave resolves cleanly
+    window._waveNodesLeft=0;
+    for(var i=nodes.length-1;i>=0;i--){ if(!nodes[i]||!nodes[i].alive) continue; nodes[i].hp=0; nodes[i].shieldHp=0; killNode(i); }
+    projectiles=[];beams=[];shockwaves=[];
+  } else {
+    // Minor boss: a tension spike, not a payday. The wave continues.
+    var mloot=Math.round((40+currentWave*22)*bm*mult.echoRes*pay);
+    var mcores=(currentWave>=6 && currentWave%2===0)?Math.max(1,Math.round(1*pay)):0;
+    res.red+=mloot; res.blue+=mloot; res.yellow+=mloot; res.core+=mcores;
+    spawnFloat(b.x,b.y,'BREACH WARDEN DOWN','#ffdd00',15);
+    spawnFloat(b.x,b.y+22,'+'+fmt(mloot)+' each'+(mcores?'  ·  +'+mcores+' CORE':''),'#ff66ff',10);
+    log(b.name+' destroyed — +'+fmt(mloot)+' each'+(mcores?', +'+mcores+' core':''),'g');
+    if(mult.vampLv>0) player.hp=Math.min(player.maxHp,player.hp+4*mult.vampLv);
+  }
   checkWaveClear();
 }
 
@@ -2199,7 +2627,7 @@ function bossShockwave(scale){
   shockwaves.push({
     x:boss.x,y:boss.y,r:boss.r,maxR:Math.max(W,H)*0.8,
     speed:290+currentWave*7,
-    dmg:Math.max(2,Math.round((4+currentWave*0.7)*(scale||1))),
+    dmg:Math.max(1,Math.round((0.2+currentWave*0.22)*(scale||1)*bossPower())),
     color:boss.color,hit:false
   });
 }
@@ -2209,19 +2637,19 @@ function bossOrb(){
   var sp=115+currentWave*4;
   projectiles.push({
     x:boss.x,y:boss.y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,r:9,
-    dmg:Math.max(2,Math.round(4+currentWave*0.6)),color:boss.color,life:7,homing:0.85,fromBoss:true
+    dmg:Math.max(1,Math.round((0.5+currentWave*0.30)*bossPower())),color:boss.color,life:7,homing:0.85,fromBoss:true
   });
 }
 function bossBeam(){
   if(!boss) return;
   beams.push({
     x:boss.x,y:boss.y,ang:Math.atan2(player.y-boss.y,player.x-boss.x),
-    tele:0.85,active:0.4,dmg:Math.max(3,Math.round(6+currentWave*0.9)),hit:false,color:boss.color
+    tele:0.85,active:0.4,dmg:Math.max(1,Math.round((1+currentWave*0.40)*bossPower())),hit:false,color:boss.color
   });
 }
 function bossAdds(){
   if(!boss||!curWaveDef) return;
-  var n=2+Math.floor(currentWave/7)+boss.phase;
+  var n=1+Math.floor(currentWave/9)+Math.floor(boss.phase/2);
   for(var i=0;i<n;i++){
     var nd=makeNode(curWaveDef,null,{plain:true,noSplit:true,
       x:boss.x+(Math.random()-0.5)*110, y:boss.y+(Math.random()-0.5)*110});
@@ -2243,8 +2671,25 @@ function updateBoss(dt){
       playResonanceEnd();
       document.getElementById('boss-hud').classList.remove('vuln');
       rollBossSeq();
+      updateNoteLockUI();
       spawnFloat(boss.x,boss.y-boss.r-16,'SHIELD RESTORED',boss.color,10);
+    } else if(boss.arenaLock){
+      updateNoteLockUI();   // keep the banner in step with the countdown
     }
+  }
+  // ── mega boss: the demanded note keeps moving ──
+  if(boss.tier==='mega' && boss.vuln<=0 && boss.invuln<=0){
+    boss.noteRotT-=dt;
+    if(boss.noteRotT<=0){
+      boss.noteRotT=boss.noteRotEvery;
+      var cur=boss.seq[boss.seqIdx];
+      var pool=BOSS_NOTES.filter(function(n){ return n!==cur; });
+      boss.seq[boss.seqIdx]=pool[Math.floor(Math.random()*pool.length)];
+      spawnFloat(boss.x,boss.y-boss.r-14,'NOTE SHIFT → '+boss.seq[boss.seqIdx],'#ff2288',10);
+      playShieldChip(NOTEFREQ[boss.seq[boss.seqIdx]]||660);
+      updateBossHUD();
+    }
+    updateNoteLockUI();
   }
   // drift to a new anchor point
   boss.moveT-=dt;
@@ -2262,19 +2707,24 @@ function updateBoss(dt){
   // attacks
   boss.attackT-=dt;
   if(boss.attackT<=0 && boss.invuln<=0){
-    boss.attackT=Math.max(1.1, 4.4-currentWave*0.05-boss.phase*0.55);
+    boss.attackT=boss.tier==='minor'
+      ? Math.max(2.0, 5.4-currentWave*0.06)
+      : Math.max(1.3, 5.6-currentWave*0.06-boss.phase*0.5);
     var pick=boss.atk[Math.floor(Math.random()*boss.atk.length)];
     if(pick==='shock') bossShockwave(1);
-    else if(pick==='orb'){ for(var i=0;i<boss.phase+1;i++) bossOrb(); }
+    else if(pick==='orb'){ for(var i=0;i<(boss.tier==='minor'?1:boss.phase+1);i++) bossOrb(); }
     else if(pick==='beam') bossBeam();
     else if(pick==='adds') bossAdds();
   }
 
   // contact
   if(Math.hypot(player.x-boss.x,player.y-boss.y) < boss.r+player.r){
-    damagePlayer(Math.round(6+currentWave*0.6), boss.color);
+    damagePlayer(Math.max(1,Math.round((1+currentWave*0.30)*bossPower())), boss.color);
   }
 }
+
+// Minor bosses hit for roughly half of what a mega boss does.
+function bossPower(){ return (boss && boss.tier==='minor') ? 0.5 : 1; }
 
 function updateBossHUD(){
   if(!boss) return;
@@ -2282,13 +2732,16 @@ function updateBossHUD(){
   el.style.borderColor=boss.color;
   el.style.boxShadow='0 0 30px '+boss.color+'55';
   var nm=document.getElementById('boss-hud-name');
-  nm.textContent=boss.name+'  ·  PHASE '+boss.phase;
+  nm.textContent=boss.tier==='minor'
+    ? boss.name+'  ·  MINOR BREACH'
+    : 'SUPER BOT · '+boss.name+'  ·  PHASE '+boss.phase;
   nm.style.color=boss.color;
   var noteEl=document.getElementById('boss-hud-note');
   var st=document.getElementById('boss-hud-state');
   if(boss.vuln>0){
     noteEl.textContent='ANY'; noteEl.style.color='#ffdd00';
-    st.textContent='RESONANCE BREAK  '+boss.vuln.toFixed(1)+'s'; st.style.color='#ffdd00';
+    st.textContent=(boss.arenaLock?'LOCK OFF  ':'RESONANCE BREAK  ')+boss.vuln.toFixed(1)+'s';
+    st.style.color='#ffdd00';
   } else if(boss.invuln>0){
     noteEl.textContent='--'; noteEl.style.color='#666677';
     st.textContent='SHIELD REFORMING'; st.style.color='#666677';
@@ -2296,7 +2749,8 @@ function updateBossHUD(){
     var req=boss.seq[boss.seqIdx]||'?';
     noteEl.textContent=req;
     noteEl.style.color=COLOR_CSS[NOTE_TO_COLOR[req]]||'#fff';
-    st.textContent='PLAY THE SEQUENCE'; st.style.color='#775599';
+    st.textContent=boss.arenaLock?'ARENA LOCKED TO THIS NOTE':'PLAY THE SEQUENCE';
+    st.style.color=boss.arenaLock?'#ff2288':'#775599';
   }
   var seqHtml=boss.seq.map(function(nt,i){
     var done=i<boss.seqIdx, cur=(i===boss.seqIdx&&boss.vuln<=0);
@@ -2537,6 +2991,7 @@ function update(dt,t){
       spawnWaveNode(getWaveDef(currentWave));
     }
   }
+  updateMinorBoss(dt);
   checkWaveClear();
 
   // Auto buster
@@ -2556,9 +3011,10 @@ function update(dt,t){
   passiveT+=dt;
   if(passiveT>=1){
     passiveT=0;
-    res.yellow+=Math.floor((skillLvs['yellow_gen']||0)*0.2);
-    res.blue+=Math.floor((skillLvs['blue_gen']||0)*0.1);
-    if(mult.cryptoMining){ res.red+=1; res.blue+=1; res.yellow+=1; }
+    var pv=payoutMult();
+    res.yellow+=Math.floor((skillLvs['yellow_gen']||0)*0.2*pv);
+    res.blue+=Math.floor((skillLvs['blue_gen']||0)*0.1*pv);
+    if(mult.cryptoMining){ var cm2=Math.max(0,Math.round(1*pv)); res.red+=cm2; res.blue+=cm2; res.yellow+=cm2; }
   }
 
   // Aura damage to nearby nodes
@@ -2773,7 +3229,7 @@ function killVoidEntity(idx){
   // Loot
   var base=Math.round(40+currentWave*15);
   var lootMult=1+(skillLvs['void_loot']||0);
-  var loot=Math.round(base*lootMult);
+  var loot=Math.round(base*lootMult*payoutMult());
   res.red+=loot; res.blue+=loot; res.yellow+=loot;
   spawnFloat(ve.x,ve.y,'VOID CRUSHED! +'+loot,'#44ffcc',13);
   log('Void Entity destroyed! +'+loot+' each resource','y');
@@ -2791,6 +3247,9 @@ function gameOver(){
   window._waveNodesLeft=0;
   hideBossHUD();
   boss=null;
+  minorBossState='none';
+  hideBossWarn();
+  updateNoteLockUI();
   nodes=[]; particles=[]; voidEntities=[]; projectiles=[]; shockwaves=[]; beams=[];
   log('BREACH FAILED on wave '+currentWave+'. Upgrade, then run it again.','r');
   musicStop(0.3);
@@ -2811,23 +3270,30 @@ function openUpgrades(mode,info){
   waveActive=false;
   window._upgradesOpen=true;
   hideBossHUD();
+  hideBossWarn();
+  updateNoteLockUI();     // never leave the flute keys greyed out in the menu
+  updateReplayBadge();
   nodes=[];projectiles=[];shockwaves=[];beams=[];voidEntities=[];
   document.getElementById('wave-overlay').classList.remove('active');
 
   var rt=document.getElementById('up-result');
   var sb=document.getElementById('up-sub');
   if(mode==='clear'){
-    rt.textContent=isBossWave(currentWave)?('BOSS DOWN · WAVE '+currentWave):('WAVE '+currentWave+' CLEARED');
-    rt.style.color='#33ff88';
-    nextWaveNum=currentWave+1;
+    rt.textContent=(replayActive?'REPLAY CLEARED · WAVE ':(isBossWave(currentWave)?'BOSS DOWN · WAVE ':'WAVE '))+currentWave
+      +(replayActive||isBossWave(currentWave)?'':' CLEARED');
+    rt.style.color=replayActive?'#ffdd00':'#33ff88';
+    // A replay never advances the frontier; a real clear does.
+    if(!replayActive) maxCleared=Math.max(maxCleared||0,currentWave);
+    nextWaveNum=naturalNextWave();
   } else {
     rt.textContent='BREACH FAILED · WAVE '+currentWave;
     rt.style.color='#ff3355';
-    nextWaveNum=currentWave;
+    // Dying in a replay drops you back to your real progression, not the replay.
+    nextWaveNum=replayActive?naturalNextWave():currentWave;
   }
   sb.innerHTML=info||'';
-  document.getElementById('up-go').textContent='DEPLOY  ->  WAVE '+nextWaveNum
-    +(isBossWave(nextWaveNum)?'  [BOSS]':'');
+  buildWaveSelect();
+  refreshDeployBtn();
   var pb=document.getElementById('prestige-btn2');
   pb.style.display=(bestWave>=15)?'':'none';
   pb.textContent='COLLAPSE RUN  (+'+prestigeGain()+' ECHOES)';
@@ -2844,6 +3310,53 @@ function closeUpgrades(){
   window._upgradesOpen=false;
   autoSave();
   showWaveTransition(nextWaveNum);
+}
+
+// ── WAVE SELECT ──────────────────────────────────────────────────
+// Every wave from 1 up to the frontier. Boss waves are flagged so you
+// can pick a fight instead of stumbling into one.
+function buildWaveSelect(){
+  var sel=document.getElementById('wave-sel');
+  if(!sel) return;
+  var top=Math.min(Math.max(bestWave||1, nextWaveNum||1), naturalNextWave());
+  top=Math.max(1,top);
+  var html='';
+  for(var w=1;w<=top;w++){
+    var isBoss=isBossWave(w);
+    var isReplay=w<naturalNextWave();
+    var label='WAVE '+w
+      +(isBoss?'  ★ MEGA BOSS':'')
+      +(isReplay?'   (REPLAY '+Math.round(REPLAY_PAYOUT*100)+'%)':'');
+    html+='<option value="'+w+'"'+(w===nextWaveNum?' selected':'')
+      +(isBoss?' class="boss-opt"':'')+'>'+label+'</option>';
+  }
+  sel.innerHTML=html;
+  sel.value=String(nextWaveNum);
+}
+
+function onWaveSelect(v){
+  var w=parseInt(v,10);
+  if(!w||w<1) return;
+  nextWaveNum=w;
+  playMenuClick();
+  refreshDeployBtn();
+}
+
+function refreshDeployBtn(){
+  var willReplay=nextWaveNum<naturalNextWave();
+  var btn=document.getElementById('up-go');
+  if(btn){
+    btn.textContent='DEPLOY  ->  WAVE '+nextWaveNum
+      +(isBossWave(nextWaveNum)?'  [MEGA BOSS]':'')
+      +(willReplay?'  [REPLAY]':'');
+    btn.style.borderColor=willReplay?'#ffdd00':'';
+    btn.style.color=willReplay?'#ffdd00':'';
+  }
+  var warn=document.getElementById('replay-warn');
+  if(warn){
+    warn.classList.toggle('hidden',!willReplay);
+    warn.textContent='REPLAY · '+Math.round(REPLAY_PAYOUT*100)+'% SALVAGE · BEST WAVE KEPT';
+  }
 }
 
 function refreshUpgradeHead(){
@@ -2874,6 +3387,7 @@ function doPrestige(){
   recomputeMults();
   player.hp=player.maxHp;
   currentWave=0; nextWaveNum=1;
+  maxCleared=0; replayActive=false;   // a collapsed run starts its frontier over
   log('RUN COLLAPSED — +'+g+' echoes (total '+echoes+'). Permanent +'+(echoes*8)+'% damage and yield.','y');
   document.getElementById('upgrade-screen').classList.remove('active');
   window._upgradesOpen=false;
@@ -2894,6 +3408,21 @@ function render(t){
   // Note flash overlay
   if(noteFlash.life>0 && noteFlash.color){
     ctx.save(); ctx.globalAlpha=noteFlash.life*0.1; ctx.fillStyle=noteFlash.color; ctx.fillRect(0,0,W,H); ctx.restore();
+  }
+
+  // ── ARENA NOTE LOCK: the demanded note, huge, behind the fight ──
+  if(boss && boss.alive && boss.arenaLock){
+    var lockNote=boss.vuln>0?'ANY':(boss.invuln>0?'--':(boss.seq[boss.seqIdx]||'?'));
+    var lockCol=boss.vuln>0?'#ffdd00':(COLOR_CSS[NOTE_TO_COLOR[lockNote]]||'#ff2288');
+    ctx.save();
+    ctx.globalAlpha=0.07+Math.sin(t*4)*0.02;
+    ctx.fillStyle=lockCol;
+    ctx.fillRect(0,0,W,H);                                  // arena tint in the live colour
+    ctx.globalAlpha=0.13+Math.sin(t*3)*0.03;
+    ctx.font='bold '+Math.round(Math.min(W,H)*0.55)+'px "Press Start 2P"';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(lockNote,W/2,H/2);
+    ctx.restore();
   }
 
   // Particles
@@ -3851,6 +4380,7 @@ function buildSaveData(){
     v:2,
     wave: nextWaveNum||currentWave||1,
     best: bestWave,
+    cleared: maxCleared||0,
     res: JSON.parse(JSON.stringify(res)),
     skills: JSON.parse(JSON.stringify(skillLvs)),
     echoes: echoes,
@@ -3867,6 +4397,10 @@ function applySaveData(data){
   echoes=data.echoes||0;
   prestigeCount=data.prestige||0;
   bestWave=data.best||data.wave||1;
+  // Pre-replay saves have no frontier stored — derive it from where they
+  // were about to deploy, which is exactly maxCleared+1.
+  maxCleared=(data.cleared!=null)?data.cleared:Math.max(0,(data.wave||1)-1);
+  replayActive=false;
   recomputeMults();
   player.hp=player.maxHp;
 }
@@ -4003,6 +4537,7 @@ function startGameFresh(){
   document.getElementById('upgrade-screen').classList.remove('active');
   res={red:0,blue:0,yellow:0,core:0};
   echoes=0; prestigeCount=0; bestWave=1;
+  maxCleared=0; replayActive=false;
   Object.keys(skillLvs).forEach(function(k){skillLvs[k]=0;});
   recomputeMults();
   player.hp=player.maxHp;
@@ -4010,6 +4545,7 @@ function startGameFresh(){
   nodes=[]; particles=[]; voidEntities=[]; drones=[];
   projectiles=[]; shockwaves=[]; beams=[]; boss=null;
   combo=0; currentWave=0; nextWaveNum=1;
+  minorBossState='none'; replayActive=false;
   window._waveNodesLeft=0; window._waveSpawnTimer=0; window._upgradesOpen=false;
   player.x=W/2; player.y=H/2;
   gameOn=true;
