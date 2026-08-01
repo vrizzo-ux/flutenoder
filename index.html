@@ -649,7 +649,16 @@ function getAudioChain(){
     masterGain.connect(ac.destination);
     sfxGain = ac.createGain();   sfxGain.gain.value = 0.9;
     musicGain = ac.createGain(); musicGain.gain.value = 0.38;
-    sfxGain.connect(masterGain);
+    // The sfx layers stack (fast flute runs, kills, boss drone all at once).
+    // A gentle bus compressor keeps that from clipping without ducking hits.
+    if(ac.createDynamicsCompressor){
+      var comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 4;
+      comp.attack.value = 0.004; comp.release.value = 0.16;
+      sfxGain.connect(comp); comp.connect(masterGain);
+    } else {
+      sfxGain.connect(masterGain);
+    }
     musicGain.connect(masterGain);
   }
   masterGain.gain.value = (gameSettings&&gameSettings.vol!=null) ? gameSettings.vol/100 : 0.8;
@@ -660,43 +669,154 @@ function getAudioChain(){
 var NOTEFREQ={C:523.25,D:587.33,E:659.25,F:698.46,G:783.99,A:880,B:987.77};
 var NOTEFREQ2={C:261.63,D:293.66,E:329.63,F:349.23,G:392,A:440,B:493.88};
 
-// ── Play a flute note (player input) ──
+// ── Shared SFX building blocks ──────────────────────────────────
+// One white-noise buffer, reused by every noise-based effect.
+var _sfxNoiseBuf=null;
+function sfxNoiseSrc(ac){
+  if(!_sfxNoiseBuf || _sfxNoiseBuf.sampleRate!==ac.sampleRate){
+    var len=Math.floor(ac.sampleRate*1.5);
+    _sfxNoiseBuf=ac.createBuffer(1,len,ac.sampleRate);
+    var d=_sfxNoiseBuf.getChannelData(0);
+    for(var i=0;i<len;i++) d[i]=Math.random()*2-1;
+  }
+  var s=ac.createBufferSource();
+  s.buffer=_sfxNoiseBuf; s.loop=true;
+  s.playbackRate.value=0.85+Math.random()*0.3;   // vary the grain per hit
+  return s;
+}
+// Hard-clip + fold curve — turns clean saws into something ugly on purpose.
+var _gritCurve=null;
+function gritCurve(){
+  if(!_gritCurve){
+    var n=1024; _gritCurve=new Float32Array(n);
+    for(var i=0;i<n;i++){
+      var x=i/(n-1)*2-1;
+      _gritCurve[i]=Math.tanh(x*4)*0.78 + Math.sin(x*9.0)*0.14;   // fold adds inharmonic bite
+    }
+  }
+  return _gritCurve;
+}
+function sfxShaper(ac){
+  var w=ac.createWaveShaper();
+  w.curve=gritCurve(); w.oversample='2x';
+  return w;
+}
+// Short pitched partial with an exponential tail.
+function sfxPartial(ac,dest,type,f0,f1,t,dur,vol,dly){
+  var o=ac.createOscillator(), g=ac.createGain();
+  o.type=type; o.frequency.setValueAtTime(f0,t);
+  if(f1&&f1!==f0) o.frequency.exponentialRampToValueAtTime(Math.max(1,f1),t+dur);
+  g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+(dly||0.004));
+  g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+  o.connect(g); g.connect(dest); o.start(t); o.stop(t+dur+0.02);
+  return o;
+}
+// Filtered noise burst.
+function sfxNoiseBurst(ac,dest,t,dur,vol,filtType,f0,f1,q){
+  var s=sfxNoiseSrc(ac), f=ac.createBiquadFilter(), g=ac.createGain();
+  f.type=filtType||'bandpass'; f.frequency.setValueAtTime(f0,t);
+  if(f1&&f1!==f0) f.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+dur);
+  if(q!=null) f.Q.value=q;
+  g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+  s.connect(f); f.connect(g); g.connect(dest);
+  s.start(t); s.stop(t+dur+0.02);
+  return s;
+}
+
+// ── Play a flute note (player input) ─────────────────────────────
+// Flute timbre: dominant fundamental, a weak 2nd/3rd harmonic, a breath
+// chiff on the attack, and vibrato that only arrives once the note has
+// settled. Everything runs through one lowpass so it stays soft on top.
 function playNote(n,dur,vol){
-  if(dur===undefined)dur=0.18; if(vol===undefined)vol=0.15;
+  // Sits deliberately under the kill/impact sounds it triggers — the note is
+  // the cause, the bust is the payoff.
+  if(dur===undefined)dur=0.42; if(vol===undefined)vol=0.115;
   var ch=getAudioChain(); var ac=ch.ac; var f=NOTEFREQ[n]; if(!f)return;
-  var osc=ac.createOscillator(),g=ac.createGain();
-  osc.type='sine'; osc.frequency.value=f;
-  var lfo=ac.createOscillator(),lg=ac.createGain();
-  lfo.frequency.value=5.5; lg.gain.value=5;
-  lfo.connect(lg); lg.connect(osc.frequency);
-  g.gain.setValueAtTime(0,ac.currentTime);
-  g.gain.linearRampToValueAtTime(vol,ac.currentTime+0.015);
-  g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+dur);
-  osc.connect(g); g.connect(ch.sfx);
-  osc.start(); osc.stop(ac.currentTime+dur);
-  lfo.start(); lfo.stop(ac.currentTime+dur);
+  var t=ac.currentTime;
+  var end=t+dur;
+
+  var body=ac.createGain();                 // per-voice amp envelope
+  var lp=ac.createBiquadFilter();
+  lp.type='lowpass'; lp.Q.value=0.7;
+  lp.frequency.setValueAtTime(f*3,t);
+  lp.frequency.linearRampToValueAtTime(f*10,t+0.05);  // breathy opening
+  lp.frequency.exponentialRampToValueAtTime(f*4.5,end);
+  lp.connect(body); body.connect(ch.sfx);
+
+  // amp envelope: quick but not clicky, small sustain dip, long-ish tail
+  body.gain.setValueAtTime(0.0001,t);
+  body.gain.linearRampToValueAtTime(vol,t+0.022);
+  body.gain.linearRampToValueAtTime(vol*0.72,t+0.10);
+  body.gain.setValueAtTime(vol*0.72,t+dur*0.55);
+  body.gain.exponentialRampToValueAtTime(0.0008,end);
+
+  // vibrato — delayed onset, shallow, like a real player leaning in
+  var lfo=ac.createOscillator(), lg=ac.createGain();
+  lfo.type='sine'; lfo.frequency.setValueAtTime(4.8,t);
+  lfo.frequency.linearRampToValueAtTime(5.6,end);
+  lg.gain.setValueAtTime(0,t);
+  lg.gain.setValueAtTime(0,t+0.11);
+  lg.gain.linearRampToValueAtTime(f*0.004,t+dur*0.6);   // ~7 cents, shallow
+  lfo.connect(lg);
+  lfo.start(t); lfo.stop(end+0.02);
+
+  // Harmonic stack. A flute is fundamental-dominant with a clear 2nd and a
+  // present-but-quiet 3rd/4th — that pattern is what stops it reading as a sine.
+  var partials=[[1,1.0,'sine'],[2,0.34,'sine'],[3,0.17,'sine'],[4,0.075,'triangle']];
+  partials.forEach(function(p,i){
+    var o=ac.createOscillator(), g=ac.createGain();
+    o.type=p[2];
+    var pf=f*p[0];
+    o.frequency.setValueAtTime(pf*0.988,t);              // tiny attack scoop
+    o.frequency.linearRampToValueAtTime(pf,t+0.045);
+    if(i>0) o.detune.value=(i%2?4:-4)*i;                 // slight inharmonicity
+    lg.connect(o.frequency);                             // vibrato rides the stack
+    // upper partials fade faster than the fundamental
+    var pv=p[1];
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.linearRampToValueAtTime(pv,t+0.02+i*0.006);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0008,pv*(i?0.45:0.8)),t+dur*0.7);
+    o.connect(g); g.connect(lp);
+    o.start(t); o.stop(end+0.02);
+  });
+
+  // breath: a chiff on the attack plus a whisper of air under the tone
+  sfxNoiseBurst(ac,lp,t,0.09,vol*0.55,'bandpass',f*2.0,f*1.2,1.1);
+  sfxNoiseBurst(ac,lp,t,dur*0.9,vol*0.11,'bandpass',f*3.0,f*2.0,0.7);
 }
 
 // ── Bust sound (node kill confirmation) ──
+// Pitched to the node's own note so kills stay musical, but with a
+// noise crack and a sub thump underneath so it lands with some weight.
 function playBust(f){
-  var ch=getAudioChain(); var ac=ch.ac;
-  var o=ac.createOscillator(),g=ac.createGain();
-  o.type='square'; o.frequency.setValueAtTime(f*2,ac.currentTime);
-  o.frequency.exponentialRampToValueAtTime(f*0.5,ac.currentTime+0.15);
-  g.gain.setValueAtTime(0.09,ac.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+0.2);
-  o.connect(g); g.connect(ch.sfx); o.start(); o.stop(ac.currentTime+0.2);
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+  var lp=ac.createBiquadFilter();
+  lp.type='lowpass'; lp.frequency.setValueAtTime(6500,t);
+  lp.frequency.exponentialRampToValueAtTime(900,t+0.22); lp.connect(out);
+
+  sfxPartial(ac,lp,'triangle',f*2,f*0.5,t,0.20,0.16);      // main body drop
+  sfxPartial(ac,lp,'square',  f*1.005,f*0.5,t,0.13,0.055); // edge
+  sfxPartial(ac,lp,'sine',    f*3,f*2.6,t,0.09,0.065);     // bright ping, on-note
+  sfxPartial(ac,out,'sine',   f*0.5,f*0.25,t,0.16,0.10);   // sub thump
+  sfxNoiseBurst(ac,out,t,0.09,0.09,'bandpass',2600,900,1.0); // crack
 }
 
 // ── Hurt sound ──
+// Levelled to sit with the new impacts rather than under them.
 function playHurt(){
-  var ch=getAudioChain(); var ac=ch.ac;
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
   var o=ac.createOscillator(),g=ac.createGain();
-  o.type='sawtooth'; o.frequency.setValueAtTime(220,ac.currentTime);
-  o.frequency.linearRampToValueAtTime(80,ac.currentTime+0.12);
-  g.gain.setValueAtTime(0.09,ac.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+0.12);
-  o.connect(g); g.connect(ch.sfx); o.start(); o.stop(ac.currentTime+0.12);
+  o.type='sawtooth'; o.frequency.setValueAtTime(220,t);
+  o.frequency.linearRampToValueAtTime(80,t+0.14);
+  g.gain.setValueAtTime(0.22,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.14);
+  o.connect(g); g.connect(ch.sfx); o.start(); o.stop(t+0.14);
+  sfxPartial(ac,ch.sfx,'sine',120,45,t,0.16,0.10);            // body of the impact
+  sfxNoiseBurst(ac,ch.sfx,t,0.09,0.06,'lowpass',1600,400,0.8);
 }
 
 // ── Wave clear fanfare ──
@@ -774,6 +894,222 @@ function playResourcePing(color){
   g.gain.setValueAtTime(0.05,ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+0.1);
   o.connect(g); g.connect(ch.sfx); o.start(); o.stop(ac.currentTime+0.1);
+}
+
+// ── Node shield: chipped vs shattered ────────────────────────────
+// Both are glassy and inharmonic so they read as "armour", not "kill".
+function playShieldChip(f){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  f=f||660;
+  var out=ac.createGain(); out.gain.value=0.9; out.connect(ch.sfx);
+  sfxPartial(ac,out,'sine',f*3.1,f*3.0,t,0.10,0.10);
+  sfxPartial(ac,out,'sine',f*4.7,f*4.6,t,0.07,0.062);
+  sfxNoiseBurst(ac,out,t,0.05,0.077,'bandpass',5200,4200,3.0);
+}
+function playShieldBreak(f){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  f=f||660;
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+  // glass shatter: bright noise front, then inharmonic partials ringing out
+  sfxNoiseBurst(ac,out,t,0.28,0.095,'highpass',3200,7000,0.7);
+  sfxNoiseBurst(ac,out,t,0.09,0.075,'bandpass',6800,3000,2.2);
+  [[2.76,0.070,0.34],[4.19,0.048,0.26],[5.83,0.033,0.20],[7.41,0.020,0.15]].forEach(function(p,i){
+    sfxPartial(ac,out,'sine',f*p[0],f*p[0]*0.97,t+i*0.008,p[2],p[1]);
+  });
+  sfxPartial(ac,out,'sine',f*0.5,f*0.3,t,0.14,0.07);        // the plate dropping
+}
+
+// ── Elite kill ───────────────────────────────────────────────────
+// Heavier than a normal bust, with a core-pickup shimmer on the tail.
+function playEliteKill(){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+  var lp=ac.createBiquadFilter();
+  lp.type='lowpass'; lp.Q.value=4;
+  lp.frequency.setValueAtTime(1100,t);
+  lp.frequency.exponentialRampToValueAtTime(180,t+0.34); lp.connect(out);
+
+  // detuned saw pair collapsing downward — the "crack"
+  sfxPartial(ac,lp,'sawtooth',420,120,t,0.32,0.155);
+  var o2=sfxPartial(ac,lp,'sawtooth',420,120,t,0.32,0.128); o2.detune.value=-22;
+  sfxPartial(ac,out,'sine',130,44,t,0.26,0.18);              // body thump
+  sfxNoiseBurst(ac,out,t,0.16,0.10,'bandpass',1800,500,1.2);
+
+  // core shimmer — rising triad, clearly a reward
+  [1046.5,1318.5,1568,2093].forEach(function(f,i){
+    sfxPartial(ac,out,'triangle',f,f,t+0.13+i*0.045,0.22,0.075);
+  });
+}
+
+// ── Boss: Resonance Break window ─────────────────────────────────
+// Not a reward jingle. The window is a countdown you are standing
+// inside of, so it gets an alarm stab and a throbbing drone that runs
+// for the whole duration and gets cut the moment the window closes.
+var _resNodes=[], _resGain=null;
+function stopResonanceDrone(fade){
+  if(!_resGain && !_resNodes.length) return;
+  var ac=getAudioChain().ac, t=ac.currentTime, f=(fade==null?0.12:fade);
+  if(_resGain){
+    try{
+      _resGain.gain.cancelScheduledValues(t);
+      _resGain.gain.setValueAtTime(Math.max(0.0001,_resGain.gain.value),t);
+      _resGain.gain.exponentialRampToValueAtTime(0.0001,t+f);
+    }catch(e){}
+  }
+  var dying=_resNodes.slice();
+  _resNodes=[]; _resGain=null;
+  dying.forEach(function(n){ try{ n.stop(t+f+0.02); }catch(e){} });
+}
+function playResonanceBreak(dur){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  dur=dur||4.0;
+  stopResonanceDrone(0.02);
+
+  // ── the stab: siren riser into a tritone cluster ──
+  var stab=ac.createGain(); stab.gain.value=1; stab.connect(ch.sfx);
+  sfxNoiseBurst(ac,stab,t,0.30,0.07,'bandpass',600,7000,1.6);      // riser
+  [110,155.6,220,311.1].forEach(function(f,i){                      // root + tritone, 2 octaves
+    sfxPartial(ac,stab,'sawtooth',f*0.94,f,t+0.10,0.55,0.055-i*0.008);
+  });
+  sfxPartial(ac,stab,'sine',70,42,t+0.10,0.40,0.10);                // impact sub
+
+  // ── the drone: it stays for the window ──
+  var g=ac.createGain(); g.connect(ch.sfx);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.055,t+0.25);
+  g.gain.setValueAtTime(0.055,t+dur-0.5);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);                // self-closing
+  _resGain=g;
+
+  var shaper=sfxShaper(ac);
+  var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.Q.value=7;
+  lp.frequency.setValueAtTime(320,t);
+  shaper.connect(lp); lp.connect(g);
+
+  // filter throb — the "danger" pulse
+  var mod=ac.createOscillator(), modG=ac.createGain();
+  mod.type='sine'; mod.frequency.setValueAtTime(4.5,t);
+  mod.frequency.linearRampToValueAtTime(9.0,t+dur);                 // tightens as time runs out
+  modG.gain.value=240;
+  mod.connect(modG); modG.connect(lp.frequency);
+  mod.start(t); _resNodes.push(mod);
+
+  [[55,0],[77.78,+6],[55,-9]].forEach(function(p){                  // root + tritone, beating
+    var o=ac.createOscillator(), og=ac.createGain();
+    o.type='sawtooth'; o.frequency.value=p[0]; o.detune.value=p[1];
+    og.gain.value=0.5; o.connect(og); og.connect(shaper);
+    o.start(t); _resNodes.push(o);
+  });
+
+  // ticking countdown, scheduled up front; killed early if the window is
+  var ticks=Math.max(1,Math.floor(dur));
+  for(var i=1;i<=ticks;i++){
+    var tt=t+dur-i*1.0;
+    if(tt<=t+0.3) continue;
+    var last=(i===1);
+    sfxPartial(ac,g,'square',last?1400:900,last?1400:900,tt,0.07,last?0.06:0.035);
+  }
+}
+// Window survived to its natural end — the shield slams back on.
+function playResonanceEnd(){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  stopResonanceDrone(0.08);
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+  sfxPartial(ac,out,'sawtooth',180,300,t,0.20,0.05);
+  sfxPartial(ac,out,'sine',90,60,t,0.22,0.07);
+  sfxNoiseBurst(ac,out,t,0.14,0.04,'lowpass',3000,600,0.8);
+}
+
+// ── Boss phase change: warning sting ─────────────────────────────
+function playBossPhase(p){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+  var heat=(p>=3?1.35:p>=2?1.0:0.85);
+
+  // alarm: two-tone horn, minor second apart, wobbling
+  [0,0.30].forEach(function(off,k){
+    var base=(k?466.16:440)*(p>=3?1.12:1);
+    [1,1.0595].forEach(function(mul,j){                    // semitone clash
+      var o=ac.createOscillator(), g=ac.createGain(), sh=sfxShaper(ac);
+      var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=2200;
+      o.type='sawtooth';
+      o.frequency.setValueAtTime(base*mul*0.98,t+off);
+      o.frequency.linearRampToValueAtTime(base*mul,t+off+0.06);
+      g.gain.setValueAtTime(0.0001,t+off);
+      g.gain.linearRampToValueAtTime(0.045*heat*(j?0.7:1),t+off+0.03);
+      g.gain.setValueAtTime(0.045*heat*(j?0.7:1),t+off+0.16);
+      g.gain.exponentialRampToValueAtTime(0.0008,t+off+0.26);
+      o.connect(sh); sh.connect(lp); lp.connect(g); g.connect(out);
+      o.start(t+off); o.stop(t+off+0.30);
+    });
+  });
+
+  // the ground shifting under it: descending brass cluster + sub drop
+  [220,155.56,110].forEach(function(f,i){
+    sfxPartial(ac,out,'sawtooth',f*1.06,f*0.88,t+0.52+i*0.05,0.70,0.045*heat);
+  });
+  sfxPartial(ac,out,'sine',80,34,t+0.52,0.55,0.11*heat);
+  sfxNoiseBurst(ac,out,t+0.52,0.55,0.05*heat,'lowpass',2400,300,0.9);
+  if(p>=3) sfxNoiseBurst(ac,out,t+0.30,0.30,0.045,'bandpass',400,5000,1.4);  // extra riser
+}
+
+// ── Boss hit ─────────────────────────────────────────────────────
+// Metallic impact, not a beep. Break hits are brighter and harder.
+function playBossHit(isBreak){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+  var base=(isBreak?300:210)*(0.94+Math.random()*0.12);
+  var lp=ac.createBiquadFilter();
+  lp.type='lowpass'; lp.Q.value=1;
+  lp.frequency.setValueAtTime(isBreak?9000:5000,t);
+  lp.frequency.exponentialRampToValueAtTime(isBreak?1400:800,t+0.28); lp.connect(out);
+
+  // inharmonic partials = struck metal
+  [[1,0.125,0.30],[2.41,0.075,0.24],[3.79,0.050,0.18],[5.62,0.030,0.13]].forEach(function(p){
+    sfxPartial(ac,lp,isBreak?'square':'triangle',base*p[0],base*p[0]*0.96,t,p[2],p[1]*(isBreak?1.3:1));
+  });
+  sfxPartial(ac,out,'sine',isBreak?150:110,isBreak?52:40,t,0.20,isBreak?0.17:0.125);   // sub
+  sfxNoiseBurst(ac,out,t,isBreak?0.14:0.10,isBreak?0.11:0.075,'bandpass',
+                isBreak?4200:2400, isBreak?1200:800, 1.1);
+  if(isBreak) sfxPartial(ac,out,'sine',base*6,base*7,t,0.10,0.050);                    // gold ring
+}
+
+// ── Dissonance: wrong note on a boss ─────────────────────────────
+// Deliberately unpleasant — a semitone/tritone cluster through a fold
+// distortion, bending flat as it collapses. It should feel like a
+// mistake, not a sound effect.
+function playDissonance(){
+  var ch=getAudioChain(); var ac=ch.ac; var t=ac.currentTime;
+  var dur=0.62;
+  var out=ac.createGain(); out.gain.value=1; out.connect(ch.sfx);
+
+  var sh=sfxShaper(ac);
+  var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.Q.value=6;
+  lp.frequency.setValueAtTime(3200,t);
+  lp.frequency.exponentialRampToValueAtTime(300,t+dur);
+  var env=ac.createGain();
+  env.gain.setValueAtTime(0.0001,t);
+  env.gain.linearRampToValueAtTime(0.075,t+0.012);
+  env.gain.setValueAtTime(0.062,t+0.18);
+  env.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+  sh.connect(lp); lp.connect(env); env.connect(out);
+
+  // cluster: root, minor 2nd, tritone, minor 9th — all bending flat
+  [[233.08,0],[246.94,+14],[329.63,-11],[466.16,+22],[247.5,-25]].forEach(function(p,i){
+    var o=ac.createOscillator(), g=ac.createGain();
+    o.type=(i%2?'square':'sawtooth');
+    o.frequency.setValueAtTime(p[0],t);
+    o.frequency.exponentialRampToValueAtTime(p[0]*0.90,t+dur);   // sags out of tune
+    o.detune.value=p[1];
+    g.gain.value=0.55-i*0.06;
+    o.connect(g); g.connect(sh);
+    o.start(t); o.stop(t+dur+0.02);
+  });
+
+  // the floor giving way + a dirty crash
+  sfxPartial(ac,out,'sine',110,38,t,0.42,0.095);
+  sfxNoiseBurst(ac,out,t,0.40,0.055,'bandpass',1500,260,0.8);
+  sfxNoiseBurst(ac,out,t,0.16,0.035,'highpass',2000,900,0.7);
 }
 
 // ================================================================
@@ -1402,6 +1738,8 @@ function handleNote(noteName,keyK){
     if(n.shieldHp>0){
       if(n.shieldColor===targetColor || overloadActive>0 || mult.singularity){
         n.shieldHp--; n.flash=0.3; hitAny=true;
+        var shFreq=NOTEFREQ[COLOR_NOTE[n.shieldColor]]||660;
+        if(n.shieldHp>0) playShieldChip(shFreq); else playShieldBreak(shFreq);
         spawnFloat(n.x,n.y-n.r-8, n.shieldHp>0?'SHIELD -1':'SHIELD BROKEN', COLOR_CSS[n.shieldColor]||'#fff', 8);
       }
       continue;
@@ -1537,6 +1875,7 @@ function makeNode(waveDef,forced,opts){
 function hideBossHUD(){
   var hud=document.getElementById('boss-hud');
   if(hud){ hud.classList.remove('active'); hud.classList.remove('vuln'); }
+  stopResonanceDrone();   // the window is gone; the drone must not outlive it
 }
 
 function killNode(i){
@@ -1565,6 +1904,7 @@ function killNode(i){
   spawnFloat(n.x,n.y,'+'+amt,c);
 
   if(n.isElite){
+    playEliteKill();
     var cores=1+(skillLvs['core_finder']||0);
     res.core+=cores;
     spawnFloat(n.x,n.y-18,'ELITE  +'+cores+' CORE','#ff66ff',11);
@@ -1779,7 +2119,7 @@ function bossNote(noteName){
       document.getElementById('boss-hud').classList.add('vuln');
       spawnFloat(boss.x,boss.y-boss.r-24,'RESONANCE BREAK','#ffdd00',16);
       log('RESONANCE BREAK — every note lands for 4 seconds','y');
-      playComboMilestone();
+      playResonanceBreak(boss.vuln);
     }
     updateBossHUD();
   } else {
@@ -1787,6 +2127,7 @@ function bossNote(noteName){
       spawnFloat(boss.x,boss.y-boss.r-12,'HARMONIC HOLD','#44ffcc',9);
     } else {
       boss.seqIdx=0;
+      playDissonance();
       spawnFloat(player.x,player.y-26,'DISSONANCE','#ff3355',11);
       bossShockwave(0.55);
       flashDistort();
@@ -1800,7 +2141,7 @@ function bossDamage(dmg,isBreak){
   if(!boss) return;
   boss.hp-=dmg; boss.flash=0.25;
   spawnFloat(boss.x+(Math.random()-0.5)*50, boss.y-8, '-'+fmt(dmg), isBreak?'#ffdd00':boss.color, isBreak?13:10);
-  playBust(600+Math.random()*200);
+  playBossHit(isBreak);
   combo++; comboTimer=2.5;
   if(skillLvs['siphon']>0){ var s=skillLvs['siphon']*2; res.red+=s;res.blue+=s;res.yellow+=s; }
   var pct=boss.hp/boss.maxHp;
@@ -1815,6 +2156,8 @@ function bossPhase(p){
   boss.vuln=0;
   boss.invuln=1.3;
   boss.attackT=1.4;
+  stopResonanceDrone();
+  playBossPhase(p);
   document.getElementById('boss-hud').classList.remove('vuln');
   rollBossSeq();
   bossShockwave(0.8);
@@ -1827,6 +2170,7 @@ function bossPhase(p){
 function killBoss(){
   var b=boss;
   boss=null;
+  stopResonanceDrone(0.25);
   hideBossHUD();
   for(var j=0;j<70;j++){
     var a=Math.random()*Math.PI*2, sp=60+Math.random()*220;
@@ -1896,6 +2240,7 @@ function updateBoss(dt){
     boss.vuln-=dt;
     if(boss.vuln<=0){
       boss.vuln=0;
+      playResonanceEnd();
       document.getElementById('boss-hud').classList.remove('vuln');
       rollBossSeq();
       spawnFloat(boss.x,boss.y-boss.r-16,'SHIELD RESTORED',boss.color,10);
