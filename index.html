@@ -814,7 +814,7 @@ function playHurt(){
   o.frequency.linearRampToValueAtTime(80,t+0.14);
   g.gain.setValueAtTime(0.22,t);
   g.gain.exponentialRampToValueAtTime(0.001,t+0.14);
-  o.connect(g); g.connect(ch.sfx); o.start(); o.stop(t+0.14);
+  o.connect(g); g.connect(ch.sfx); o.start(t); o.stop(t+0.14);
   sfxPartial(ac,ch.sfx,'sine',120,45,t,0.16,0.10);            // body of the impact
   sfxNoiseBurst(ac,ch.sfx,t,0.09,0.06,'lowpass',1600,400,0.8);
 }
